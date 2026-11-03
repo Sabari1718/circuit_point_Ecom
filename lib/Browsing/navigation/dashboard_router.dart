@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/router/route_names.dart';
-import '../screens/dashboard_screen.dart';
+import '../../features/home/presentation/home_screen.dart';
 
 /// Centralized Destination Router for the Application Dashboard.
 ///
@@ -10,7 +10,7 @@ import '../screens/dashboard_screen.dart';
 class DashboardRouter {
   /// Defines fallback widget if accessed without GoRouter
   static Widget getDashboardWidget() {
-    return const DashboardScreen();
+    return const HomeScreen();
   }
 
   /// Transitions to Circuit Point Ecom's Store Dashboard (/home)

@@ -270,11 +270,15 @@ class _LoginScreenState extends State<LoginScreen> {
         final res = await PhoneVerificationService.sendSmsOtp(phone: target);
         if (res.success) {
           _otpVerificationId = res.verificationId;
-          _showSuccessSnackBar(res.message ?? 'OTP sent to mobile.');
+          setState(() {
+            _otpController.text = '1234';
+          });
+          _showSuccessSnackBar('Mobile verification code: 1234 (Auto-filled)');
         } else {
           _showErrorSnackBar(res.errorMessage ?? 'Failed to send SMS OTP.');
         }
       } else {
+        _otpController.clear();
         final res = await PhoneVerificationService.sendEmailOtp(target);
         if (res['success'] == true) {
           _showSuccessSnackBar(res['message'] ?? 'OTP sent to your email.');
@@ -314,7 +318,7 @@ class _LoginScreenState extends State<LoginScreen> {
           _showSuccessSnackBar('Mobile OTP verified! Now please set your password.');
           _goToStep(1); // Go to password setup
         } else {
-          _showErrorSnackBar(res.errorMessage ?? 'Invalid OTP code.');
+          _showErrorSnackBar(res.errorMessage ?? 'Invalid OTP code. Enter 1234.');
         }
       } else {
         final res = await PhoneVerificationService.verifyEmailOtp(identifier, code);
@@ -564,7 +568,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       duration: const Duration(milliseconds: 300),
                       curve: Curves.easeInOut,
                       child: SizedBox(
-                        height: _currentStep == 2 ? 460 : (_currentStep == 3 ? 430 : 380),
+                        height: _currentStep == 2 ? 480 : (_currentStep == 3 ? 480 : 380),
                         child: PageView(
                           controller: _pageController,
                           physics: const NeverScrollableScrollPhysics(),
@@ -1121,19 +1125,23 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: _isValidatingStep2
                     ? Row(
                         mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           const SizedBox(
-                            width: 20,
-                            height: 20,
+                            width: 18,
+                            height: 18,
                             child: CircularProgressIndicator(
-                              strokeWidth: 2.5,
+                              strokeWidth: 2.2,
                               valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                             ),
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            _isNewUser ? 'Creating account...' : 'Verifying password with DB...',
-                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              _isNewUser ? 'Creating account...' : 'Verifying...',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                            ),
                           ),
                         ],
                       )
@@ -1458,7 +1466,86 @@ class _LoginScreenState extends State<LoginScreen> {
             fontWeight: FontWeight.w500,
           ),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 14),
+
+        if (isPhone) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFFCD34D)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.verified_rounded, color: Color(0xFFD97706), size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Verification Code: 1234',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF92400E),
+                        ),
+                      ),
+                      Text(
+                        'SMS credits exhausted. Use 1234 to verify instantly.',
+                        style: TextStyle(fontSize: 10, color: Color(0xFFB45309)),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _otpController.text = '1234';
+                    });
+                  },
+                  style: TextButton.styleFrom(
+                    backgroundColor: const Color(0xFFD97706),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
+                  child: const Text('Auto-fill', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 11)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+        ] else ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFECFDF5),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFA7F3D0)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.mark_email_read_rounded, color: Color(0xFF059669), size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Verification code sent to your email (check inbox & spam folder).',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF047857),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
 
         // OTP Input Field
         Container(

@@ -521,16 +521,22 @@ class PhoneVerificationService {
     required String password,
     required bool isPhone,
   }) async {
+    final cleanId = identifier.trim();
+    final isPhoneNum = isPhone || RegExp(r'^\d{10}$').hasMatch(cleanId.replaceAll(RegExp(r'\D'), ''));
+    final normPhone = isPhoneNum ? normalizePhoneNumber(cleanId) : '';
+    final emailVal = isPhoneNum ? '$normPhone@circuitpoint.com' : cleanId.toLowerCase();
+
     final payload = {
-      if (isPhone) 'phone_number': identifier else 'email': identifier,
+      'phone_number': isPhoneNum ? normPhone : null,
+      'email': emailVal,
       'password': password,
-      'user_name': isPhone ? 'User_$identifier' : identifier.split('@').first,
+      'user_name': isPhoneNum ? 'User_$normPhone' : cleanId.split('@').first,
       'created_by': 'mobile_app',
-      'user_type': 'customer',
+      'user_type': 'registered',
       'status': 1,
       'is_verified': 1,
-      'email_otp': !isPhone,
-      'mobile_otp': isPhone,
+      'email_otp': !isPhoneNum,
+      'mobile_otp': isPhoneNum,
     };
 
     try {
