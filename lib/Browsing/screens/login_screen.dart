@@ -66,9 +66,15 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();   // Empty by default
   final PageController _pageController = PageController();
 
-  int _currentStep = 0; // 0 = Method & ID, 1 = Password, 2 = Captcha
+  int _currentStep = 0; // 0 = Method & ID, 1 = Password, 2 = Captcha, 3 = OTP (New User)
   bool _isLoading = false;
   bool _isValidatingStep1 = false;
+  bool _isValidatingStep2 = false;
+  bool _isNewUser = false;
+  bool _isSendingOtp = false;
+  bool _isVerifyingOtp = false;
+  String? _otpVerificationId;
+  final _otpController = TextEditingController();
   bool _obscurePassword = true;
   String _authStepStatus = '';
 
@@ -107,6 +113,7 @@ class _LoginScreenState extends State<LoginScreen> {
     _pageController.dispose();
     _identifierController.dispose();
     _passwordController.dispose();
+    _otpController.dispose();
     super.dispose();
   }
 
@@ -158,20 +165,24 @@ class _LoginScreenState extends State<LoginScreen> {
         final result = await PhoneVerificationService.verifyPhoneNumber(rawValue);
         if (!mounted) return;
 
-        if (!result.isRegistered) {
-          _showErrorSnackBar(
-            result.errorMessage ??
-                'This mobile number is not registered. Please enter a registered number.',
-          );
+        if (result.isRegistered) {
+          // Existing User in DB -> Go to Password Verification
+          _isNewUser = false;
+          final welcomeName = result.userName != null && result.userName!.isNotEmpty
+              ? ' (${result.userName})'
+              : '';
+          _showSuccessSnackBar('Mobile verified$welcomeName! Please enter your password.');
+          _goToStep(1);
+          return;
+        } else {
+          // New User NOT in DB -> Go to OTP Verification Page!
+          _isNewUser = true;
+          _showSuccessSnackBar('New user detected! Sending OTP to ${PhoneVerificationService.maskPhoneNumber(rawValue)}...');
+          await _sendOtp(rawValue, isPhone: true);
+          if (!mounted) return;
+          _goToStep(3);
           return;
         }
-
-        final welcomeName = result.userName != null && result.userName!.isNotEmpty
-            ? ' (${result.userName})'
-            : '';
-        _showSuccessSnackBar('Mobile verified$welcomeName! Please enter your password.');
-        _goToStep(1);
-        return;
       }
 
       // 2. Email check (via dedicated live endpoint /api/login/check-email/<email>)
@@ -185,20 +196,24 @@ class _LoginScreenState extends State<LoginScreen> {
         final result = await PhoneVerificationService.verifyEmail(rawValue);
         if (!mounted) return;
 
-        if (!result.isRegistered) {
-          _showErrorSnackBar(
-            result.errorMessage ??
-                'This email is not registered. Please enter a registered email address.',
-          );
+        if (result.isRegistered) {
+          // Existing User in DB -> Go to Password Verification
+          _isNewUser = false;
+          final welcomeName = result.userName != null && result.userName!.isNotEmpty
+              ? ' (${result.userName})'
+              : '';
+          _showSuccessSnackBar('Email verified$welcomeName! Please enter your password.');
+          _goToStep(1);
+          return;
+        } else {
+          // New User NOT in DB -> Go to OTP Verification Page!
+          _isNewUser = true;
+          _showSuccessSnackBar('New user detected! Sending verification OTP to $rawValue...');
+          await _sendOtp(rawValue, isPhone: false);
+          if (!mounted) return;
+          _goToStep(3);
           return;
         }
-
-        final welcomeName = result.userName != null && result.userName!.isNotEmpty
-            ? ' (${result.userName})'
-            : '';
-        _showSuccessSnackBar('Email verified$welcomeName! Please enter your password.');
-        _goToStep(1);
-        return;
       }
 
       // 3. User ID check (via live registry API /api/user/ids-phone)
@@ -219,6 +234,7 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
 
+        _isNewUser = false;
         final welcomeName = result.userName != null && result.userName!.isNotEmpty
             ? ' (${result.userName})'
             : '';
@@ -246,13 +262,154 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _validateStep2AndProceed() {
+  /// Sends OTP to phone or email for new user verification
+  Future<void> _sendOtp(String target, {required bool isPhone}) async {
+    setState(() => _isSendingOtp = true);
+    try {
+      if (isPhone) {
+        final res = await PhoneVerificationService.sendSmsOtp(phone: target);
+        if (res.success) {
+          _otpVerificationId = res.verificationId;
+          _showSuccessSnackBar(res.message ?? 'OTP sent to mobile.');
+        } else {
+          _showErrorSnackBar(res.errorMessage ?? 'Failed to send SMS OTP.');
+        }
+      } else {
+        final res = await PhoneVerificationService.sendEmailOtp(target);
+        if (res['success'] == true) {
+          _showSuccessSnackBar(res['message'] ?? 'OTP sent to your email.');
+        } else {
+          _showErrorSnackBar(res['message'] ?? 'Failed to send Email OTP.');
+        }
+      }
+    } catch (e) {
+      _showErrorSnackBar('Error sending OTP: $e');
+    } finally {
+      if (mounted) setState(() => _isSendingOtp = false);
+    }
+  }
+
+  /// Verifies OTP entered by new user
+  Future<void> _verifyOtpAndProceed() async {
+    final code = _otpController.text.trim();
+    if (code.isEmpty) {
+      _showErrorSnackBar('Please enter the OTP code.');
+      return;
+    }
+
+    final identifier = _identifierController.text.trim();
+    final isPhone = _selectedOption.apiKey == 'phone_number';
+
+    setState(() => _isVerifyingOtp = true);
+
+    try {
+      if (isPhone) {
+        final res = await PhoneVerificationService.validateOtp(
+          verificationId: _otpVerificationId ?? '',
+          code: code,
+          phone: identifier,
+        );
+        if (!mounted) return;
+        if (res.isValid) {
+          _showSuccessSnackBar('Mobile OTP verified! Now please set your password.');
+          _goToStep(1); // Go to password setup
+        } else {
+          _showErrorSnackBar(res.errorMessage ?? 'Invalid OTP code.');
+        }
+      } else {
+        final res = await PhoneVerificationService.verifyEmailOtp(identifier, code);
+        if (!mounted) return;
+        if (res['success'] == true) {
+          _showSuccessSnackBar('Email OTP verified! Now please set your password.');
+          _goToStep(1); // Go to password setup
+        } else {
+          _showErrorSnackBar(res['message'] ?? 'Invalid or expired OTP.');
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorSnackBar('OTP verification error: $e');
+    } finally {
+      if (mounted) setState(() => _isVerifyingOtp = false);
+    }
+  }
+
+  /// Validates password against the server DB before moving to next step!
+  Future<void> _validateStep2AndProceed() async {
     final pass = _passwordController.text.trim();
     if (pass.isEmpty) {
       _showErrorSnackBar('Please enter your Password');
       return;
     }
-    _goToStep(2);
+
+    final identifier = _identifierController.text.trim();
+    if (identifier.isEmpty) {
+      _goToStep(0);
+      _showErrorSnackBar('Please enter your ${_selectedOption.label}');
+      return;
+    }
+
+    // A: IF NEW USER -> Register Account!
+    if (_isNewUser) {
+      if (pass.length < 6) {
+        _showErrorSnackBar('Password must be at least 6 characters long.');
+        return;
+      }
+
+      setState(() => _isValidatingStep2 = true);
+      try {
+        final regResult = await PhoneVerificationService.registerNewUser(
+          identifier: identifier,
+          password: pass,
+          isPhone: _selectedOption.apiKey == 'phone_number',
+        );
+
+        if (!mounted) return;
+
+        if (regResult['success'] == true) {
+          _showSuccessSnackBar('Account created successfully! Please verify captcha.');
+          _goToStep(2); // Go to Captcha
+        } else {
+          _showErrorSnackBar(regResult['message'] ?? 'Registration failed. Please try again.');
+        }
+      } catch (e) {
+        if (!mounted) return;
+        _showErrorSnackBar('Registration error: $e');
+      } finally {
+        if (mounted) setState(() => _isValidatingStep2 = false);
+      }
+      return;
+    }
+
+    // B: IF EXISTING USER -> LIVE DATABASE PASSWORD VERIFICATION!
+    setState(() => _isValidatingStep2 = true);
+    try {
+      final credResult = await PhoneVerificationService.verifyCredentials(
+        loginField: _selectedOption.apiKey,
+        loginValue: identifier,
+        password: pass,
+      );
+
+      if (!mounted) return;
+
+      if (credResult['isValid'] == true) {
+        // Password matches database!
+        _showSuccessSnackBar('Password verified! Please select captcha.');
+        _goToStep(2); // Go to Captcha
+      } else {
+        // Password does NOT match the database record!
+        _showErrorSnackBar(
+          credResult['message'] ??
+              'Incorrect password. Please enter the correct password for this account.',
+        );
+        // User stays on Step 1 (Password screen)
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorSnackBar('Password check error: $e');
+    } finally {
+      if (mounted) setState(() => _isValidatingStep2 = false);
+    }
   }
 
   void _showErrorSnackBar(String message) {
@@ -407,7 +564,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       duration: const Duration(milliseconds: 300),
                       curve: Curves.easeInOut,
                       child: SizedBox(
-                        height: _currentStep == 2 ? 460 : 380,
+                        height: _currentStep == 2 ? 460 : (_currentStep == 3 ? 430 : 380),
                         child: PageView(
                           controller: _pageController,
                           physics: const NeverScrollableScrollPhysics(),
@@ -415,6 +572,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             _buildStep1Page(),
                             _buildStep2Page(),
                             _buildStep3Page(),
+                            _buildOtpPage(),
                           ],
                         ),
                       ),
@@ -516,11 +674,23 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildStepIndicator() {
-    final steps = [
-      {'title': 'Select Method', 'icon': Icons.badge_outlined},
-      {'title': 'Password', 'icon': Icons.lock_outline_rounded},
-      {'title': 'Captcha', 'icon': Icons.security_rounded},
-    ];
+    final List<Map<String, dynamic>> steps;
+    final int activeIndex;
+    if (_isNewUser) {
+      steps = [
+        {'title': 'Account', 'icon': Icons.badge_outlined},
+        {'title': 'Verify OTP', 'icon': Icons.sms_outlined},
+        {'title': 'Set Password', 'icon': Icons.lock_outline_rounded},
+      ];
+      activeIndex = _currentStep == 0 ? 0 : (_currentStep == 3 ? 1 : 2);
+    } else {
+      steps = [
+        {'title': 'Select Method', 'icon': Icons.badge_outlined},
+        {'title': 'Password', 'icon': Icons.lock_outline_rounded},
+        {'title': 'Captcha', 'icon': Icons.security_rounded},
+      ];
+      activeIndex = _currentStep;
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -533,7 +703,7 @@ class _LoginScreenState extends State<LoginScreen> {
         children: List.generate(steps.length * 2 - 1, (index) {
           if (index.isOdd) {
             final stepBefore = index ~/ 2;
-            final isCompleted = _currentStep > stepBefore;
+            final isCompleted = activeIndex > stepBefore;
             return Expanded(
               child: Container(
                 height: 3,
@@ -547,13 +717,17 @@ class _LoginScreenState extends State<LoginScreen> {
           }
 
           final stepIndex = index ~/ 2;
-          final isActive = _currentStep == stepIndex;
-          final isDone = _currentStep > stepIndex;
+          final isActive = activeIndex == stepIndex;
+          final isDone = activeIndex > stepIndex;
 
           return InkWell(
             onTap: () {
-              if (stepIndex < _currentStep) {
-                _goToStep(stepIndex);
+              if (stepIndex < activeIndex) {
+                if (_isNewUser) {
+                  _goToStep(stepIndex == 0 ? 0 : 3);
+                } else {
+                  _goToStep(stepIndex);
+                }
               }
             },
             borderRadius: BorderRadius.circular(10),
@@ -797,9 +971,9 @@ class _LoginScreenState extends State<LoginScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'STEP 2 OF 3',
-          style: TextStyle(
+        Text(
+          _isNewUser ? 'NEW USER SETUP' : 'STEP 2 OF 3',
+          style: const TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w800,
             color: Color(0xFFE94560),
@@ -807,9 +981,9 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
         const SizedBox(height: 2),
-        const Text(
-          'Enter Your Password',
-          style: TextStyle(
+        Text(
+          _isNewUser ? 'Create Account Password' : 'Enter Your Password',
+          style: const TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w800,
             color: Color(0xFF0F172A),
@@ -918,7 +1092,7 @@ class _LoginScreenState extends State<LoginScreen> {
         Row(
           children: [
             OutlinedButton(
-              onPressed: () => _goToStep(0),
+              onPressed: () => _goToStep(_isNewUser ? 3 : 0),
               style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xFF64748B),
                 side: const BorderSide(color: Color(0xFFCBD5E1)),
@@ -936,7 +1110,7 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton(
-                onPressed: _validateStep2AndProceed,
+                onPressed: _isValidatingStep2 ? null : _validateStep2AndProceed,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFE94560),
                   foregroundColor: Colors.white,
@@ -944,17 +1118,36 @@ class _LoginScreenState extends State<LoginScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   elevation: 2,
                 ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Next: Verify Captcha',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                    ),
-                    SizedBox(width: 8),
-                    Icon(Icons.arrow_forward_rounded, size: 18),
-                  ],
-                ),
+                child: _isValidatingStep2
+                    ? Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            _isNewUser ? 'Creating account...' : 'Verifying password with DB...',
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _isNewUser ? 'Complete Registration' : 'Next: Verify Captcha',
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.arrow_forward_rounded, size: 18),
+                        ],
+                      ),
               ),
             ),
           ],
@@ -1216,6 +1409,176 @@ class _LoginScreenState extends State<LoginScreen> {
                             'Authenticate & Login',
                             style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                           ),
+                        ],
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ==========================================
+  // STEP 4: OTP VERIFICATION (NEW USERS)
+  // ==========================================
+  Widget _buildOtpPage() {
+    final identifier = _identifierController.text.trim();
+    final isPhone = _selectedOption.apiKey == 'phone_number';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'NEW USER REGISTRATION',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFFE94560),
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: 2),
+        const Text(
+          'Verify One-Time Password',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF0F172A),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          isPhone
+              ? 'We sent a verification code to ${PhoneVerificationService.maskPhoneNumber(identifier)}'
+              : 'We sent a verification code to $identifier',
+          style: const TextStyle(
+            fontSize: 13,
+            color: Color(0xFF64748B),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 18),
+
+        // OTP Input Field
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: TextField(
+            controller: _otpController,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 8,
+            ),
+            maxLength: 6,
+            decoration: const InputDecoration(
+              counterText: '',
+              hintText: '• • • •',
+              hintStyle: TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 22,
+                letterSpacing: 8,
+              ),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+            ),
+            onSubmitted: (_) => _isVerifyingOtp ? null : _verifyOtpAndProceed(),
+          ),
+        ),
+
+        const SizedBox(height: 12),
+
+        // Resend button
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              "Didn't receive code? ",
+              style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            ),
+            TextButton(
+              onPressed: _isSendingOtp ? null : () => _sendOtp(identifier, isPhone: isPhone),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFE94560),
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                _isSendingOtp ? 'Sending...' : 'Resend OTP',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+
+        const Spacer(),
+
+        // Bottom Navigation (Back & Verify)
+        Row(
+          children: [
+            OutlinedButton(
+              onPressed: _isVerifyingOtp ? null : () => _goToStep(0),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF64748B),
+                side: const BorderSide(color: Color(0xFFCBD5E1)),
+                padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.arrow_back_rounded, size: 18),
+                  SizedBox(width: 6),
+                  Text('Back', style: TextStyle(fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: _isVerifyingOtp ? null : _verifyOtpAndProceed,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFE94560),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 2,
+                ),
+                child: _isVerifyingOtp
+                    ? const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          ),
+                          SizedBox(width: 10),
+                          Text(
+                            'Verifying OTP...',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      )
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Verify & Continue',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                          SizedBox(width: 8),
+                          Icon(Icons.arrow_forward_rounded, size: 18),
                         ],
                       ),
               ),

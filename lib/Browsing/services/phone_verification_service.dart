@@ -347,7 +347,7 @@ class PhoneVerificationService {
 
   static Future<OtpSendResult> sendSmsOtp({
     required String phone,
-    required Map<String, dynamic> verifiedUser,
+    Map<String, dynamic>? verifiedUser,
   }) async {
     final norm = normalizePhoneNumber(phone);
 
@@ -376,7 +376,7 @@ class PhoneVerificationService {
     return OtpSendResult(
       success: true,
       verificationId: verificationId,
-      message: 'OTP sent to ${maskPhoneNumber(phone)}! (Enter any 4 digits to verify)',
+      message: 'OTP sent to ${maskPhoneNumber(phone)}! (Enter 1234 or any 4 digits to verify)',
       cooldownSeconds: defaultCooldownSeconds,
     );
   }
@@ -395,7 +395,7 @@ class PhoneVerificationService {
       );
     }
 
-    if (RegExp(r'^\d{4}$').hasMatch(cleanCode)) {
+    if (RegExp(r'^\d{4,6}$').hasMatch(cleanCode)) {
       return const OtpValidationResult(isValid: true);
     }
 
@@ -403,5 +403,152 @@ class PhoneVerificationService {
       isValid: false,
       errorMessage: 'Please enter a valid 4-digit OTP number.',
     );
+  }
+
+  /// Verify credentials (password check against database record)
+  static Future<Map<String, dynamic>> verifyCredentials({
+    required String loginField,
+    required String loginValue,
+    required String password,
+  }) async {
+    try {
+      final payload = {
+        loginField: loginValue,
+        'password': password,
+      };
+
+      final response = await ApiClient.post(
+        endpoint: 'https://managelogin.jobes24x7.com/api/login/authenticate',
+        body: payload,
+        timeout: const Duration(seconds: 12),
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        return {
+          'isValid': true,
+          'data': decoded['data'] ?? decoded,
+          'message': 'Password verified successfully.',
+        };
+      } else {
+        Map<String, dynamic> errorData = {};
+        try {
+          errorData = jsonDecode(response.body);
+        } catch (_) {}
+        final msg = errorData['data']?['message'] ??
+            errorData['message'] ??
+            'Incorrect password. Please enter the correct password for this account.';
+        return {
+          'isValid': false,
+          'message': msg,
+        };
+      }
+    } catch (e) {
+      return {
+        'isValid': false,
+        'message': 'Unable to connect to verification server: $e',
+      };
+    }
+  }
+
+  /// Send Email OTP using the live /api/send-otp endpoint
+  static Future<Map<String, dynamic>> sendEmailOtp(String email) async {
+    final cleanEmail = email.trim().toLowerCase();
+    try {
+      final response = await ApiClient.post(
+        endpoint: 'https://managelogin.jobes24x7.com/api/send-otp',
+        body: {'email': cleanEmail},
+        timeout: const Duration(seconds: 12),
+      );
+
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode == 200 && (decoded['success'] == true || decoded['result'] == 'Success')) {
+        return {
+          'success': true,
+          'message': decoded['message'] ?? 'OTP sent to $cleanEmail',
+        };
+      } else {
+        return {
+          'success': false,
+          'message': decoded['message'] ?? 'Failed to send Email OTP. Please try again.',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error sending Email OTP: $e',
+      };
+    }
+  }
+
+  /// Verify Email OTP using the live /api/verify-otp endpoint
+  static Future<Map<String, dynamic>> verifyEmailOtp(String email, String otp) async {
+    final cleanEmail = email.trim().toLowerCase();
+    final cleanOtp = otp.trim();
+    try {
+      final response = await ApiClient.post(
+        endpoint: 'https://managelogin.jobes24x7.com/api/verify-otp',
+        body: {'email': cleanEmail, 'otp': cleanOtp},
+        timeout: const Duration(seconds: 12),
+      );
+
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode == 200 && (decoded['success'] == true || decoded['result'] == 'Success')) {
+        return {
+          'success': true,
+          'message': decoded['message'] ?? 'Email OTP verified successfully!',
+        };
+      } else {
+        final errorMsg = decoded['message'] ??
+            decoded['data']?['message'] ??
+            'Invalid or expired OTP. Please try again.';
+        return {
+          'success': false,
+          'message': errorMsg,
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error verifying Email OTP: $e',
+      };
+    }
+  }
+
+  /// Register a newly verified user
+  static Future<Map<String, dynamic>> registerNewUser({
+    required String identifier,
+    required String password,
+    required bool isPhone,
+  }) async {
+    final payload = {
+      if (isPhone) 'phone_number': identifier else 'email': identifier,
+      'password': password,
+      'user_name': isPhone ? 'User_$identifier' : identifier.split('@').first,
+      'created_by': 'mobile_app',
+      'user_type': 'customer',
+      'status': 1,
+      'is_verified': 1,
+      'email_otp': !isPhone,
+      'mobile_otp': isPhone,
+    };
+
+    try {
+      final response = await ApiClient.post(
+        endpoint: 'https://managelogin.jobes24x7.com/api/login/create',
+        body: payload,
+        timeout: const Duration(seconds: 12),
+      );
+
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {'success': true, 'data': decoded};
+      } else {
+        final msg = decoded['data']?['message'] ?? decoded['message'] ?? 'Failed to create account.';
+        return {'success': false, 'message': msg};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Registration server error: $e'};
+    }
   }
 }
