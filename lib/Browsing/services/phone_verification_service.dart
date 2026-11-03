@@ -475,7 +475,7 @@ class PhoneVerificationService {
     }
   }
 
-  /// Send OTP via WhatsApp MessageCentral API
+  /// Send OTP via WhatsApp API (Dedicated Live Endpoint: /api/send-whatsapp-otp)
   static Future<OtpSendResult> sendWhatsAppOtp({required String phone}) async {
     final norm = normalizePhoneNumber(phone);
 
@@ -486,8 +486,58 @@ class PhoneVerificationService {
       );
     }
 
+    final rateLimitError = checkRateLimit(phone);
+    if (rateLimitError != null) {
+      return OtpSendResult(
+        success: false,
+        errorMessage: rateLimitError,
+        cooldownSeconds: getRemainingCooldownSeconds(phone),
+      );
+    }
+
     try {
-      debugPrint('📱 [WhatsApp Gateway] Calling MessageCentral WhatsApp send API for: $norm');
+      debugPrint('💬 [WhatsApp Gateway] Calling live /api/send-whatsapp-otp for: $norm');
+      final response = await ApiClient.post(
+        endpoint: 'https://managelogin.jobes24x7.com/api/send-whatsapp-otp',
+        body: {
+          'phone': norm,
+          'phone_number': norm,
+          'mobileNumber': norm,
+        },
+        timeout: const Duration(seconds: 15),
+      );
+
+      debugPrint('💬 [WhatsApp Gateway] Response HTTP ${response.statusCode}: ${response.body}');
+      final dynamic decoded = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && (decoded['success'] == true || decoded['result'] == 'Success')) {
+        final timeout = (decoded['data']?['timeout'] as int?) ?? defaultCooldownSeconds;
+        _verificationStore[norm] = 'wa_$norm';
+
+        final now = DateTime.now();
+        _phoneLastSent[norm] = now;
+        _phoneAttemptHistory.putIfAbsent(norm, () => []).add(now);
+
+        return OtpSendResult(
+          success: true,
+          verificationId: 'wa_$norm',
+          message: decoded['message'] ?? 'OTP sent successfully to your WhatsApp (+91 $norm)',
+          cooldownSeconds: timeout,
+        );
+      } else {
+        // Fallback to MessageCentral if needed
+        debugPrint('⚠️ [WhatsApp Gateway] Primary endpoint returned non-200. Trying fallback...');
+        return await _sendWhatsAppMessageCentralFallback(norm);
+      }
+    } catch (e) {
+      debugPrint('❌ [WhatsApp Gateway] Primary failed with $e. Trying fallback...');
+      return await _sendWhatsAppMessageCentralFallback(norm);
+    }
+  }
+
+  /// Internal MessageCentral fallback for WhatsApp OTP
+  static Future<OtpSendResult> _sendWhatsAppMessageCentralFallback(String norm) async {
+    try {
       final url = Uri.parse(
         '$_cpaasBaseUrl/verification/v3/send?countryCode=91&customerId=$_cpaasCustomerId&flowType=WHATSAPP&mobileNumber=$norm',
       );
@@ -500,7 +550,7 @@ class PhoneVerificationService {
         },
       ).timeout(const Duration(seconds: 12));
 
-      debugPrint('📱 [WhatsApp Gateway] Response HTTP ${response.statusCode}: ${response.body}');
+      debugPrint('📱 [WhatsApp MessageCentral] Response HTTP ${response.statusCode}: ${response.body}');
       final dynamic decoded = jsonDecode(response.body);
 
       if (decoded is Map && decoded['responseCode'] == 200) {
@@ -530,10 +580,58 @@ class PhoneVerificationService {
         );
       }
     } catch (e) {
-      debugPrint('❌ [WhatsApp Gateway] Error: $e');
       return OtpSendResult(
         success: false,
         errorMessage: 'Network error calling WhatsApp gateway: $e',
+      );
+    }
+  }
+
+  /// Validates OTP code received on WhatsApp (/api/verify-whatsapp-otp)
+  static Future<OtpValidationResult> validateWhatsAppOtp({
+    required String phone,
+    required String code,
+  }) async {
+    final norm = normalizePhoneNumber(phone);
+    final cleanCode = code.trim();
+
+    if (cleanCode.isEmpty) {
+      return const OtpValidationResult(
+        isValid: false,
+        errorMessage: 'Please enter the 4-digit OTP received on WhatsApp.',
+      );
+    }
+
+    try {
+      debugPrint('💬 [WhatsApp Gateway] Validating OTP code: $cleanCode for $norm');
+      final response = await ApiClient.post(
+        endpoint: 'https://managelogin.jobes24x7.com/api/verify-whatsapp-otp',
+        body: {
+          'phone': norm,
+          'phone_number': norm,
+          'otp': cleanCode,
+        },
+        timeout: const Duration(seconds: 15),
+      );
+
+      debugPrint('💬 [WhatsApp Gateway] Validation Response HTTP ${response.statusCode}: ${response.body}');
+      final dynamic decoded = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && (decoded['success'] == true || decoded['result'] == 'Success')) {
+        _verificationStore.remove(norm);
+        return const OtpValidationResult(isValid: true);
+      } else {
+        final errMsg = decoded['message'] ?? decoded['data']?['message'] ?? 'Invalid WhatsApp OTP. Please check and try again.';
+        return OtpValidationResult(
+          isValid: false,
+          errorMessage: errMsg.toString(),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ [WhatsApp Gateway] Validation error: $e');
+      return OtpValidationResult(
+        isValid: false,
+        errorMessage: 'Error validating WhatsApp OTP: $e',
       );
     }
   }
@@ -549,52 +647,49 @@ class PhoneVerificationService {
     if (cleanCode.isEmpty) {
       return const OtpValidationResult(
         isValid: false,
-        errorMessage: 'Please enter the OTP received via SMS.',
+        errorMessage: 'Please enter the OTP received.',
       );
     }
 
+    // 1. Primary validation via dedicated WhatsApp endpoint
+    final waRes = await validateWhatsAppOtp(phone: norm, code: cleanCode);
+    if (waRes.isValid) {
+      return waRes;
+    }
+
+    // 2. Secondary fallback via MessageCentral validateOtp (if verificationId exists and not purely local)
     final effectiveVerId = verificationId.isNotEmpty
         ? verificationId
         : (_verificationStore[norm] ?? '');
 
-    try {
-      debugPrint('📱 [SMS Gateway] Validating OTP code: $cleanCode for $norm (verId: $effectiveVerId)');
-      final url = Uri.parse(
-        '$_cpaasBaseUrl/verification/v3/validateOtp?countryCode=91&mobileNumber=$norm&verificationId=$effectiveVerId&customerId=$_cpaasCustomerId&code=$cleanCode',
-      );
-
-      final response = await http.get(
-        url,
-        headers: {
-          'authToken': _cpaasAuthToken,
-          'Content-Type': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 12));
-
-      debugPrint('📱 [SMS Gateway] Validation Response HTTP ${response.statusCode}: ${response.body}');
-      final dynamic decoded = jsonDecode(response.body);
-
-      if (decoded is Map && decoded['responseCode'] == 200) {
-        _verificationStore.remove(norm);
-        return const OtpValidationResult(isValid: true);
-      } else {
-        final msg = (decoded is Map)
-            ? (decoded['data']?['errorMessage'] ??
-                decoded['message'] ??
-                'Invalid OTP code. Please check and try again.')
-            : 'Verification failed (${response.statusCode})';
-        return OtpValidationResult(
-          isValid: false,
-          errorMessage: msg.toString(),
+    if (effectiveVerId.isNotEmpty && !effectiveVerId.startsWith('wa_')) {
+      try {
+        debugPrint('📱 [SMS Gateway] Validating OTP code: $cleanCode for $norm (verId: $effectiveVerId)');
+        final url = Uri.parse(
+          '$_cpaasBaseUrl/verification/v3/validateOtp?countryCode=91&mobileNumber=$norm&verificationId=$effectiveVerId&customerId=$_cpaasCustomerId&code=$cleanCode',
         );
+
+        final response = await http.get(
+          url,
+          headers: {
+            'authToken': _cpaasAuthToken,
+            'Content-Type': 'application/json',
+          },
+        ).timeout(const Duration(seconds: 12));
+
+        debugPrint('📱 [SMS Gateway] Validation Response HTTP ${response.statusCode}: ${response.body}');
+        final dynamic decoded = jsonDecode(response.body);
+
+        if (decoded is Map && decoded['responseCode'] == 200) {
+          _verificationStore.remove(norm);
+          return const OtpValidationResult(isValid: true);
+        }
+      } catch (e) {
+        debugPrint('❌ [SMS Gateway] Error validating OTP: $e');
       }
-    } catch (e) {
-      debugPrint('❌ [SMS Gateway] Error validating OTP: $e');
-      return OtpValidationResult(
-        isValid: false,
-        errorMessage: 'Network error validating OTP: $e',
-      );
     }
+
+    return waRes;
   }
 
   /// Verify credentials (password check against database record)

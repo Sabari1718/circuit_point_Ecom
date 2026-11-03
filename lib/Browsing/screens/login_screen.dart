@@ -175,10 +175,10 @@ class _LoginScreenState extends State<LoginScreen> {
           _goToStep(1);
           return;
         } else {
-          // New User NOT in DB -> Go to OTP Verification Page!
+          // New User NOT in DB -> Go to WhatsApp OTP Verification Page!
           _isNewUser = true;
-          _showSuccessSnackBar('New user detected! Sending OTP to ${PhoneVerificationService.maskPhoneNumber(rawValue)}...');
-          await _sendOtp(rawValue, isPhone: true);
+          _showSuccessSnackBar('New user detected! Sending OTP to WhatsApp (${PhoneVerificationService.maskPhoneNumber(rawValue)})...');
+          await _sendOtp(rawValue, isPhone: true, useWhatsApp: true);
           if (!mounted) return;
           _goToStep(3);
           return;
@@ -262,8 +262,8 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// Sends OTP to phone (SMS or WhatsApp) or email for new user verification
-  Future<void> _sendOtp(String target, {required bool isPhone, bool useWhatsApp = false}) async {
+  /// Sends OTP to phone (WhatsApp or SMS) or email for new user verification
+  Future<void> _sendOtp(String target, {required bool isPhone, bool useWhatsApp = true}) async {
     _otpController.clear();
     setState(() => _isSendingOtp = true);
     try {
@@ -1476,20 +1476,20 @@ class _LoginScreenState extends State<LoginScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFEEF2FF),
+              color: const Color(0xFFF0FDF4),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFC7D2FE)),
+              border: Border.all(color: const Color(0xFF86EFAC)),
             ),
             child: const Row(
               children: [
-                Icon(Icons.sms_outlined, color: Color(0xFF4F46E5), size: 18),
+                Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFF16A34A), size: 18),
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Please check your SMS messages and enter the code below.',
+                    'OTP sent to your WhatsApp! Please check your WhatsApp messages and enter the code below.',
                     style: TextStyle(
                       fontSize: 11,
-                      color: Color(0xFF3730A3),
+                      color: Color(0xFF15803D),
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1568,34 +1568,34 @@ class _LoginScreenState extends State<LoginScreen> {
             spacing: 8,
             runSpacing: 6,
             children: [
-              OutlinedButton.icon(
+              ElevatedButton.icon(
                 onPressed: _isSendingOtp
                     ? null
                     : () => _sendOtp(identifier, isPhone: true, useWhatsApp: true),
-                icon: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFF16A34A), size: 15),
-                label: const Text(
-                  'Send via WhatsApp',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF15803D)),
+                icon: const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white, size: 15),
+                label: Text(
+                  _isSendingOtp ? 'Sending...' : 'Resend on WhatsApp',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white),
                 ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFF86EFAC)),
-                  backgroundColor: const Color(0xFFF0FDF4),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF25D366),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  elevation: 0,
                 ),
               ),
               OutlinedButton.icon(
                 onPressed: _isSendingOtp
                     ? null
                     : () => _sendOtp(identifier, isPhone: true, useWhatsApp: false),
-                icon: const Icon(Icons.sms_outlined, color: Color(0xFFE94560), size: 15),
+                icon: const Icon(Icons.sms_outlined, color: Color(0xFF64748B), size: 15),
                 label: const Text(
-                  'Resend via SMS',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFE94560)),
+                  'Send via SMS',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
                 ),
                 style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFFFECDD3)),
-                  backgroundColor: const Color(0xFFFFF1F2),
+                  side: const BorderSide(color: Color(0xFFE2E8F0)),
+                  backgroundColor: const Color(0xFFF8FAFC),
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
