@@ -262,18 +262,25 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// Sends OTP to phone or email for new user verification
-  Future<void> _sendOtp(String target, {required bool isPhone}) async {
+  /// Sends OTP to phone (SMS or WhatsApp) or email for new user verification
+  Future<void> _sendOtp(String target, {required bool isPhone, bool useWhatsApp = false}) async {
     _otpController.clear();
     setState(() => _isSendingOtp = true);
     try {
       if (isPhone) {
-        final res = await PhoneVerificationService.sendSmsOtp(phone: target);
+        final res = useWhatsApp
+            ? await PhoneVerificationService.sendWhatsAppOtp(phone: target)
+            : await PhoneVerificationService.sendSmsOtp(phone: target);
+
         if (res.success) {
           _otpVerificationId = res.verificationId;
-          _showSuccessSnackBar(res.message ?? 'OTP sent to mobile via SMS API.');
+          _showSuccessSnackBar(
+            res.message ?? (useWhatsApp ? 'OTP sent to your WhatsApp!' : 'OTP sent to mobile via SMS API.'),
+          );
         } else {
-          _showErrorSnackBar(res.errorMessage ?? 'Failed to send SMS OTP.');
+          _showErrorSnackBar(
+            res.errorMessage ?? (useWhatsApp ? 'Failed to send WhatsApp OTP.' : 'Failed to send SMS OTP.'),
+          );
         }
       } else {
         final res = await PhoneVerificationService.sendEmailOtp(target);
@@ -1554,29 +1561,71 @@ class _LoginScreenState extends State<LoginScreen> {
 
         const SizedBox(height: 12),
 
-        // Resend button
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              "Didn't receive code? ",
-              style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-            ),
-            TextButton(
-              onPressed: _isSendingOtp ? null : () => _sendOtp(identifier, isPhone: isPhone),
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFE94560),
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        // Resend / Channel selection buttons
+        if (isPhone) ...[
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _isSendingOtp
+                    ? null
+                    : () => _sendOtp(identifier, isPhone: true, useWhatsApp: true),
+                icon: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFF16A34A), size: 15),
+                label: const Text(
+                  'Send via WhatsApp',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF15803D)),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFF86EFAC)),
+                  backgroundColor: const Color(0xFFF0FDF4),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
-              child: Text(
-                _isSendingOtp ? 'Sending...' : 'Resend OTP',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              OutlinedButton.icon(
+                onPressed: _isSendingOtp
+                    ? null
+                    : () => _sendOtp(identifier, isPhone: true, useWhatsApp: false),
+                icon: const Icon(Icons.sms_outlined, color: Color(0xFFE94560), size: 15),
+                label: const Text(
+                  'Resend via SMS',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFE94560)),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFFECDD3)),
+                  backgroundColor: const Color(0xFFFFF1F2),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
+        ] else ...[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                "Didn't receive code? ",
+                style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+              ),
+              TextButton(
+                onPressed: _isSendingOtp ? null : () => _sendOtp(identifier, isPhone: false),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFE94560),
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  _isSendingOtp ? 'Sending...' : 'Resend Email OTP',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+        ],
 
         const Spacer(),
 

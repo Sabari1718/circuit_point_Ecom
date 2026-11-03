@@ -475,6 +475,69 @@ class PhoneVerificationService {
     }
   }
 
+  /// Send OTP via WhatsApp MessageCentral API
+  static Future<OtpSendResult> sendWhatsAppOtp({required String phone}) async {
+    final norm = normalizePhoneNumber(phone);
+
+    if (norm.isEmpty || norm.length != 10) {
+      return const OtpSendResult(
+        success: false,
+        errorMessage: 'Please enter a valid 10-digit mobile number.',
+      );
+    }
+
+    try {
+      debugPrint('📱 [WhatsApp Gateway] Calling MessageCentral WhatsApp send API for: $norm');
+      final url = Uri.parse(
+        '$_cpaasBaseUrl/verification/v3/send?countryCode=91&customerId=$_cpaasCustomerId&flowType=WHATSAPP&mobileNumber=$norm',
+      );
+
+      final response = await http.post(
+        url,
+        headers: {
+          'authToken': _cpaasAuthToken,
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 12));
+
+      debugPrint('📱 [WhatsApp Gateway] Response HTTP ${response.statusCode}: ${response.body}');
+      final dynamic decoded = jsonDecode(response.body);
+
+      if (decoded is Map && decoded['responseCode'] == 200) {
+        final verificationId = decoded['data']?['verificationId']?.toString() ?? '';
+        final timeout = (decoded['data']?['timeout'] as int?) ?? defaultCooldownSeconds;
+        _verificationStore[norm] = verificationId;
+
+        final now = DateTime.now();
+        _phoneLastSent[norm] = now;
+        _phoneAttemptHistory.putIfAbsent(norm, () => []).add(now);
+
+        return OtpSendResult(
+          success: true,
+          verificationId: verificationId,
+          message: 'OTP sent successfully to WhatsApp (+91 $norm)',
+          cooldownSeconds: timeout,
+        );
+      } else {
+        final errMsg = (decoded is Map)
+            ? (decoded['message'] ??
+                decoded['data']?['errorMessage'] ??
+                'WhatsApp API error (${response.statusCode})')
+            : 'WhatsApp API returned HTTP ${response.statusCode}';
+        return OtpSendResult(
+          success: false,
+          errorMessage: errMsg.toString(),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ [WhatsApp Gateway] Error: $e');
+      return OtpSendResult(
+        success: false,
+        errorMessage: 'Network error calling WhatsApp gateway: $e',
+      );
+    }
+  }
+
   static Future<OtpValidationResult> validateOtp({
     required String verificationId,
     required String code,
