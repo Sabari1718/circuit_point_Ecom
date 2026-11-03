@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/asset_constants.dart';
 import '../navigation/dashboard_router.dart';
 import '../services/auth_service.dart';
+import '../services/phone_verification_service.dart';
 
 class LoginOption {
   final String label;
@@ -67,6 +68,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   int _currentStep = 0; // 0 = Method & ID, 1 = Password, 2 = Captcha
   bool _isLoading = false;
+  bool _isValidatingStep1 = false;
   bool _obscurePassword = true;
   String _authStepStatus = '';
 
@@ -124,12 +126,97 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
-  void _validateStep1AndProceed() {
+  Future<void> _validateStep1AndProceed() async {
     final value = _identifierController.text.trim();
     if (value.isEmpty) {
       _showErrorSnackBar('Please enter your ${_selectedOption.label}');
       return;
     }
+
+    // 1. Phone Number validation against live registered database
+    if (_selectedOption.apiKey == 'phone_number') {
+      final digits = PhoneVerificationService.normalizePhoneNumber(value);
+      if (digits.length != 10) {
+        _showErrorSnackBar('Please enter a valid 10-digit mobile number.');
+        return;
+      }
+
+      setState(() => _isValidatingStep1 = true);
+      try {
+        final result = await PhoneVerificationService.verifyPhoneNumber(value);
+        if (!mounted) return;
+
+        if (!result.isRegistered) {
+          _showErrorSnackBar(
+            result.errorMessage ??
+                'This mobile number is not registered. Please enter a registered number.',
+          );
+          return;
+        }
+
+        _showSuccessSnackBar('Mobile verified! Please enter your password.');
+        _goToStep(1);
+      } catch (e) {
+        if (!mounted) return;
+        _showErrorSnackBar('Verification error: $e');
+      } finally {
+        if (mounted) setState(() => _isValidatingStep1 = false);
+      }
+      return;
+    }
+
+    // 2. User ID validation against live registered database
+    if (_selectedOption.apiKey == 'user_main_id') {
+      if (value.length < 3) {
+        _showErrorSnackBar('Please enter a valid User ID.');
+        return;
+      }
+
+      setState(() => _isValidatingStep1 = true);
+      try {
+        final result = await PhoneVerificationService.verifyUserId(value);
+        if (!mounted) return;
+
+        if (!result.isRegistered) {
+          _showErrorSnackBar(
+            result.errorMessage ??
+                'User ID "$value" is not registered. Please check and try again.',
+          );
+          return;
+        }
+
+        _showSuccessSnackBar('User ID verified! Please enter your password.');
+        _goToStep(1);
+      } catch (e) {
+        if (!mounted) return;
+        _showErrorSnackBar('Verification error: $e');
+      } finally {
+        if (mounted) setState(() => _isValidatingStep1 = false);
+      }
+      return;
+    }
+
+    // 3. Email format validation
+    if (_selectedOption.apiKey == 'email') {
+      final emailRegex = RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$');
+      if (!emailRegex.hasMatch(value)) {
+        _showErrorSnackBar('Please enter a valid email address.');
+        return;
+      }
+      _goToStep(1);
+      return;
+    }
+
+    // 4. PAN format validation
+    if (_selectedOption.apiKey == 'pan_number') {
+      if (value.length != 10) {
+        _showErrorSnackBar('Please enter a valid 10-character PAN number.');
+        return;
+      }
+      _goToStep(1);
+      return;
+    }
+
     _goToStep(1);
   }
 
@@ -626,6 +713,7 @@ class _LoginScreenState extends State<LoginScreen> {
               contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
             ),
             onChanged: (_) => setState(() {}),
+            onSubmitted: (_) => _isValidatingStep1 ? null : _validateStep1AndProceed(),
           ),
         ),
 
@@ -633,7 +721,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
         // Next Button
         ElevatedButton(
-          onPressed: _validateStep1AndProceed,
+          onPressed: _isValidatingStep1 ? null : _validateStep1AndProceed,
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFFE94560),
             foregroundColor: Colors.white,
@@ -641,17 +729,36 @@ class _LoginScreenState extends State<LoginScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             elevation: 2,
           ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'Next: Enter Password',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(width: 8),
-              Icon(Icons.arrow_forward_rounded, size: 18),
-            ],
-          ),
+          child: _isValidatingStep1
+              ? const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    ),
+                    SizedBox(width: 10),
+                    Text(
+                      'Verifying with server...',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                )
+              : const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Next: Enter Password',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                    ),
+                    SizedBox(width: 8),
+                    Icon(Icons.arrow_forward_rounded, size: 18),
+                  ],
+                ),
         ),
       ],
     );
@@ -775,6 +882,7 @@ class _LoginScreenState extends State<LoginScreen> {
               contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
             ),
             onChanged: (_) => setState(() {}),
+            onSubmitted: (_) => _validateStep2AndProceed(),
           ),
         ),
 

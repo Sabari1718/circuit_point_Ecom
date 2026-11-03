@@ -151,6 +151,75 @@ class PhoneVerificationService {
     }
   }
 
+  static Future<PhoneVerificationResult> verifyUserId(String enteredUserId) async {
+    final cleanId = enteredUserId.trim();
+
+    if (cleanId.isEmpty) {
+      return const PhoneVerificationResult(
+        isRegistered: false,
+        normalizedPhone: '',
+        errorMessage: 'Please enter a valid User ID.',
+      );
+    }
+
+    try {
+      final response = await ApiClient.get(
+        endpoint: AppConfig.idsPhoneApiUrl,
+        timeout: const Duration(seconds: 12),
+      );
+
+      if (response.statusCode != 200) {
+        return PhoneVerificationResult(
+          isRegistered: false,
+          normalizedPhone: cleanId,
+          errorMessage: 'Verification service error (HTTP ${response.statusCode}). Please try again later.',
+        );
+      }
+
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded == null || decoded['data'] == null) {
+        return PhoneVerificationResult(
+          isRegistered: false,
+          normalizedPhone: cleanId,
+          errorMessage: 'Unexpected response from verification server.',
+        );
+      }
+
+      final List<dynamic> users = decoded['data']['data'] ?? [];
+      Map<String, dynamic>? matchedUser;
+
+      for (final user in users) {
+        final rawUserMainId = (user['user_main_id'] ?? '').toString().trim();
+        final rawId = (user['id'] ?? '').toString().trim();
+
+        if (rawUserMainId == cleanId || rawId == cleanId) {
+          matchedUser = Map<String, dynamic>.from(user);
+          break;
+        }
+      }
+
+      if (matchedUser == null) {
+        return PhoneVerificationResult(
+          isRegistered: false,
+          normalizedPhone: cleanId,
+          errorMessage: 'User ID "$cleanId" is not registered. Please enter a valid registered User ID.',
+        );
+      }
+
+      return PhoneVerificationResult(
+        isRegistered: true,
+        normalizedPhone: matchedUser['phone_number']?.toString() ?? cleanId,
+        userRecord: matchedUser,
+      );
+    } catch (e) {
+      return PhoneVerificationResult(
+        isRegistered: false,
+        normalizedPhone: cleanId,
+        errorMessage: 'Unable to connect to verification server: $e',
+      );
+    }
+  }
+
   static int getRemainingCooldownSeconds(String phone) {
     final norm = normalizePhoneNumber(phone);
     final last = _phoneLastSent[norm];

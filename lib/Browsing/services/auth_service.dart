@@ -107,20 +107,34 @@ class AuthService {
     };
 
     http.Response loginRes;
-    try {
-      loginRes = await ApiClient.post(
-        endpoint: 'https://billing.srivagroups.in/api/auth/login',
-        body: loginPayload,
-      );
-      if (loginRes.statusCode != 200) {
-        throw Exception('Billing login HTTP ${loginRes.statusCode}');
+    if (loginField == 'phone_number' || loginField == 'user_main_id') {
+      try {
+        loginRes = await ApiClient.post(
+          endpoint: 'https://managelogin.jobes24x7.com/api/login/authenticate',
+          body: loginPayload,
+        );
+      } catch (_) {
+        loginRes = await ApiClient.post(
+          endpoint: 'https://billing.srivagroups.in/api/auth/login',
+          body: loginPayload,
+        );
       }
-    } catch (_) {
-      // Fallback to managelogin if billing auth login fails
-      loginRes = await ApiClient.post(
-        endpoint: 'https://managelogin.jobes24x7.com/api/login/authenticate',
-        body: loginPayload,
-      );
+    } else {
+      try {
+        loginRes = await ApiClient.post(
+          endpoint: 'https://billing.srivagroups.in/api/auth/login',
+          body: loginPayload,
+        );
+        if (loginRes.statusCode != 200) {
+          throw Exception('Billing login HTTP ${loginRes.statusCode}');
+        }
+      } catch (_) {
+        // Fallback to managelogin if billing auth login fails
+        loginRes = await ApiClient.post(
+          endpoint: 'https://managelogin.jobes24x7.com/api/login/authenticate',
+          body: loginPayload,
+        );
+      }
     }
 
 
