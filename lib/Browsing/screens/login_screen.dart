@@ -32,18 +32,18 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   static const List<LoginOption> _loginOptions = [
     LoginOption(
-      label: 'Email id',
-      apiKey: 'email',
-      icon: Icons.mail_outline_rounded,
-      hintText: 'Enter your email id',
-      keyboardType: TextInputType.emailAddress,
-    ),
-    LoginOption(
       label: 'Phone Number',
       apiKey: 'phone_number',
       icon: Icons.phone_outlined,
       hintText: 'Enter your phone number',
       keyboardType: TextInputType.phone,
+    ),
+    LoginOption(
+      label: 'Email id',
+      apiKey: 'email',
+      icon: Icons.mail_outline_rounded,
+      hintText: 'Enter your email id',
+      keyboardType: TextInputType.emailAddress,
     ),
     LoginOption(
       label: 'User Id',
@@ -127,23 +127,35 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _validateStep1AndProceed() async {
-    final value = _identifierController.text.trim();
-    if (value.isEmpty) {
+    final rawValue = _identifierController.text.trim();
+    if (rawValue.isEmpty) {
       _showErrorSnackBar('Please enter your ${_selectedOption.label}');
       return;
     }
 
-    // 1. Phone Number validation against live registered database
-    if (_selectedOption.apiKey == 'phone_number') {
-      final digits = PhoneVerificationService.normalizePhoneNumber(value);
-      if (digits.length != 10) {
-        _showErrorSnackBar('Please enter a valid 10-digit mobile number.');
-        return;
-      }
+    // Auto-detect input type (Phone vs Email) so user doesn't get blocked even if wrong dropdown option is picked
+    final cleanDigits = PhoneVerificationService.normalizePhoneNumber(rawValue);
+    final bool isPhoneFormat = cleanDigits.length == 10 && !rawValue.contains('@');
+    final bool isEmailFormat = rawValue.contains('@');
 
-      setState(() => _isValidatingStep1 = true);
-      try {
-        final result = await PhoneVerificationService.verifyPhoneNumber(value);
+    setState(() => _isValidatingStep1 = true);
+
+    try {
+      // 1. Phone number check (via dedicated live endpoint /api/login/check-phone/<phone>)
+      if (isPhoneFormat || _selectedOption.apiKey == 'phone_number') {
+        if (_selectedOption.apiKey != 'phone_number') {
+          setState(() {
+            _selectedOption = _loginOptions.firstWhere((o) => o.apiKey == 'phone_number');
+          });
+        }
+
+        final digits = PhoneVerificationService.normalizePhoneNumber(rawValue);
+        if (digits.length != 10) {
+          _showErrorSnackBar('Please enter a valid 10-digit mobile number.');
+          return;
+        }
+
+        final result = await PhoneVerificationService.verifyPhoneNumber(rawValue);
         if (!mounted) return;
 
         if (!result.isRegistered) {
@@ -154,70 +166,84 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
 
-        _showSuccessSnackBar('Mobile verified! Please enter your password.');
+        final welcomeName = result.userName != null && result.userName!.isNotEmpty
+            ? ' (${result.userName})'
+            : '';
+        _showSuccessSnackBar('Mobile verified$welcomeName! Please enter your password.');
         _goToStep(1);
-      } catch (e) {
-        if (!mounted) return;
-        _showErrorSnackBar('Verification error: $e');
-      } finally {
-        if (mounted) setState(() => _isValidatingStep1 = false);
-      }
-      return;
-    }
-
-    // 2. User ID validation against live registered database
-    if (_selectedOption.apiKey == 'user_main_id') {
-      if (value.length < 3) {
-        _showErrorSnackBar('Please enter a valid User ID.');
         return;
       }
 
-      setState(() => _isValidatingStep1 = true);
-      try {
-        final result = await PhoneVerificationService.verifyUserId(value);
+      // 2. Email check (via dedicated live endpoint /api/login/check-email/<email>)
+      if (isEmailFormat || _selectedOption.apiKey == 'email') {
+        if (_selectedOption.apiKey != 'email') {
+          setState(() {
+            _selectedOption = _loginOptions.firstWhere((o) => o.apiKey == 'email');
+          });
+        }
+
+        final result = await PhoneVerificationService.verifyEmail(rawValue);
         if (!mounted) return;
 
         if (!result.isRegistered) {
           _showErrorSnackBar(
             result.errorMessage ??
-                'User ID "$value" is not registered. Please check and try again.',
+                'This email is not registered. Please enter a registered email address.',
           );
           return;
         }
 
-        _showSuccessSnackBar('User ID verified! Please enter your password.');
+        final welcomeName = result.userName != null && result.userName!.isNotEmpty
+            ? ' (${result.userName})'
+            : '';
+        _showSuccessSnackBar('Email verified$welcomeName! Please enter your password.');
         _goToStep(1);
-      } catch (e) {
+        return;
+      }
+
+      // 3. User ID check (via live registry API /api/user/ids-phone)
+      if (_selectedOption.apiKey == 'user_main_id') {
+        if (rawValue.length < 3) {
+          _showErrorSnackBar('Please enter a valid User ID.');
+          return;
+        }
+
+        final result = await PhoneVerificationService.verifyUserId(rawValue);
         if (!mounted) return;
-        _showErrorSnackBar('Verification error: $e');
-      } finally {
-        if (mounted) setState(() => _isValidatingStep1 = false);
-      }
-      return;
-    }
 
-    // 3. Email format validation
-    if (_selectedOption.apiKey == 'email') {
-      final emailRegex = RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$');
-      if (!emailRegex.hasMatch(value)) {
-        _showErrorSnackBar('Please enter a valid email address.');
+        if (!result.isRegistered) {
+          _showErrorSnackBar(
+            result.errorMessage ??
+                'User ID "$rawValue" is not registered. Please check and try again.',
+          );
+          return;
+        }
+
+        final welcomeName = result.userName != null && result.userName!.isNotEmpty
+            ? ' (${result.userName})'
+            : '';
+        _showSuccessSnackBar('User ID verified$welcomeName! Please enter your password.');
+        _goToStep(1);
         return;
       }
-      _goToStep(1);
-      return;
-    }
 
-    // 4. PAN format validation
-    if (_selectedOption.apiKey == 'pan_number') {
-      if (value.length != 10) {
-        _showErrorSnackBar('Please enter a valid 10-character PAN number.');
+      // 4. PAN format validation
+      if (_selectedOption.apiKey == 'pan_number') {
+        if (rawValue.length != 10) {
+          _showErrorSnackBar('Please enter a valid 10-character PAN number.');
+          return;
+        }
+        _goToStep(1);
         return;
       }
-      _goToStep(1);
-      return;
-    }
 
-    _goToStep(1);
+      _goToStep(1);
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorSnackBar('Verification error: $e');
+    } finally {
+      if (mounted) setState(() => _isValidatingStep1 = false);
+    }
   }
 
   void _validateStep2AndProceed() {

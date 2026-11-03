@@ -3,18 +3,24 @@ import 'dart:convert';
 import '../config/app_config.dart';
 import '../core/api_client.dart';
 
-/// Models the result of phone registration verification against ids-phone API
+/// Models the result of phone/email registration verification against APIs
 class PhoneVerificationResult {
   final bool isRegistered;
   final String normalizedPhone;
   final Map<String, dynamic>? userRecord;
   final String? errorMessage;
+  final String? userName;
+  final String? userEmail;
+  final String? userMainId;
 
   const PhoneVerificationResult({
     required this.isRegistered,
     required this.normalizedPhone,
     this.userRecord,
     this.errorMessage,
+    this.userName,
+    this.userEmail,
+    this.userMainId,
   });
 }
 
@@ -89,6 +95,40 @@ class PhoneVerificationService {
     }
 
     try {
+      // 1. Primary check via dedicated live API: /api/login/check-phone/<phone>
+      try {
+        final checkRes = await ApiClient.get(
+          endpoint: '${AppConfig.checkPhoneApiBase}/$normalized',
+          timeout: const Duration(seconds: 10),
+        );
+
+        if (checkRes.statusCode == 200) {
+          final decoded = jsonDecode(checkRes.body);
+          final data = decoded['data'];
+          if (data != null && data['exists'] == true) {
+            final users = data['users'] as List? ?? [];
+            final firstUser = users.isNotEmpty ? users.first as Map<String, dynamic> : null;
+            return PhoneVerificationResult(
+              isRegistered: true,
+              normalizedPhone: normalized,
+              userRecord: firstUser ?? data,
+              userName: firstUser?['user_name']?.toString() ?? data['user_name']?.toString(),
+              userEmail: firstUser?['email']?.toString() ?? data['email']?.toString(),
+              userMainId: firstUser?['user_main_id']?.toString() ?? data['user_main_id']?.toString(),
+            );
+          } else if (data != null && data['exists'] == false) {
+            return PhoneVerificationResult(
+              isRegistered: false,
+              normalizedPhone: normalized,
+              errorMessage: 'This mobile number is not registered. Please enter a registered number.',
+            );
+          }
+        }
+      } catch (_) {
+        // Fallback to ids-phone
+      }
+
+      // 2. Fallback check via ids-phone registry API
       final response = await ApiClient.get(
         endpoint: AppConfig.idsPhoneApiUrl,
         timeout: const Duration(seconds: 12),
@@ -141,11 +181,66 @@ class PhoneVerificationService {
         isRegistered: true,
         normalizedPhone: normalized,
         userRecord: matchedUser,
+        userMainId: matchedUser['user_main_id']?.toString(),
       );
     } catch (e) {
       return PhoneVerificationResult(
         isRegistered: false,
         normalizedPhone: normalized,
+        errorMessage: 'Unable to connect to verification server: $e',
+      );
+    }
+  }
+
+  static Future<PhoneVerificationResult> verifyEmail(String enteredEmail) async {
+    final cleanEmail = enteredEmail.trim();
+
+    if (cleanEmail.isEmpty || !RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$').hasMatch(cleanEmail)) {
+      return const PhoneVerificationResult(
+        isRegistered: false,
+        normalizedPhone: '',
+        errorMessage: 'Please enter a valid email address.',
+      );
+    }
+
+    try {
+      final checkRes = await ApiClient.get(
+        endpoint: '${AppConfig.checkEmailApiBase}/$cleanEmail',
+        timeout: const Duration(seconds: 10),
+      );
+
+      if (checkRes.statusCode == 200) {
+        final decoded = jsonDecode(checkRes.body);
+        final data = decoded['data'];
+        if (data != null && data['exists'] == true) {
+          final users = data['users'] as List? ?? [];
+          final firstUser = users.isNotEmpty ? users.first as Map<String, dynamic> : null;
+          return PhoneVerificationResult(
+            isRegistered: true,
+            normalizedPhone: firstUser?['phone_number']?.toString() ?? '',
+            userRecord: firstUser ?? data,
+            userName: firstUser?['user_name']?.toString() ?? data['user_name']?.toString(),
+            userEmail: cleanEmail,
+            userMainId: firstUser?['user_main_id']?.toString() ?? data['user_main_id']?.toString(),
+          );
+        } else if (data != null && data['exists'] == false) {
+          return PhoneVerificationResult(
+            isRegistered: false,
+            normalizedPhone: '',
+            errorMessage: 'This email is not registered. Please enter your registered email address.',
+          );
+        }
+      }
+
+      return PhoneVerificationResult(
+        isRegistered: false,
+        normalizedPhone: '',
+        errorMessage: 'Verification service returned HTTP ${checkRes.statusCode}. Please try again.',
+      );
+    } catch (e) {
+      return PhoneVerificationResult(
+        isRegistered: false,
+        normalizedPhone: '',
         errorMessage: 'Unable to connect to verification server: $e',
       );
     }

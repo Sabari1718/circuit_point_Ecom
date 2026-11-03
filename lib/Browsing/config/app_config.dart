@@ -18,6 +18,12 @@ class AppConfig {
   /// Phone verification API to check registered mobile numbers
   static const String idsPhoneApiUrl = 'https://managelogin.jobes24x7.com/api/user/ids-phone';
 
+  /// Direct endpoint to check if phone is registered: /api/login/check-phone/{phone}
+  static const String checkPhoneApiBase = 'https://managelogin.jobes24x7.com/api/login/check-phone';
+
+  /// Direct endpoint to check if email is registered: /api/login/check-email/{email}
+  static const String checkEmailApiBase = 'https://managelogin.jobes24x7.com/api/login/check-email';
+
   /// Businesses API to fetch registered businesses for User Main ID
   static const String myBusinessesApiUrl = 'https://billing.srivagroups.in/api/businesses/my-businesses';
 
