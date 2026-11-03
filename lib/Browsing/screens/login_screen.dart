@@ -264,21 +264,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
   /// Sends OTP to phone or email for new user verification
   Future<void> _sendOtp(String target, {required bool isPhone}) async {
+    _otpController.clear();
     setState(() => _isSendingOtp = true);
     try {
       if (isPhone) {
         final res = await PhoneVerificationService.sendSmsOtp(phone: target);
         if (res.success) {
           _otpVerificationId = res.verificationId;
-          setState(() {
-            _otpController.text = '1234';
-          });
-          _showSuccessSnackBar('Mobile verification code: 1234 (Auto-filled)');
+          _showSuccessSnackBar(res.message ?? 'OTP sent to mobile via SMS API.');
         } else {
           _showErrorSnackBar(res.errorMessage ?? 'Failed to send SMS OTP.');
         }
       } else {
-        _otpController.clear();
         final res = await PhoneVerificationService.sendEmailOtp(target);
         if (res['success'] == true) {
           _showSuccessSnackBar(res['message'] ?? 'OTP sent to your email.');
@@ -315,16 +312,16 @@ class _LoginScreenState extends State<LoginScreen> {
         );
         if (!mounted) return;
         if (res.isValid) {
-          _showSuccessSnackBar('Mobile OTP verified! Now please set your password.');
+          _showSuccessSnackBar('Mobile OTP verified successfully! Now please set your password.');
           _goToStep(1); // Go to password setup
         } else {
-          _showErrorSnackBar(res.errorMessage ?? 'Invalid OTP code. Enter 1234.');
+          _showErrorSnackBar(res.errorMessage ?? 'Invalid OTP code. Please try again.');
         }
       } else {
         final res = await PhoneVerificationService.verifyEmailOtp(identifier, code);
         if (!mounted) return;
         if (res['success'] == true) {
-          _showSuccessSnackBar('Email OTP verified! Now please set your password.');
+          _showSuccessSnackBar('Email OTP verified successfully! Now please set your password.');
           _goToStep(1); // Go to password setup
         } else {
           _showErrorSnackBar(res['message'] ?? 'Invalid or expired OTP.');
@@ -1458,8 +1455,8 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 8),
         Text(
           isPhone
-              ? 'We sent a verification code to ${PhoneVerificationService.maskPhoneNumber(identifier)}'
-              : 'We sent a verification code to $identifier',
+              ? 'We sent a 4-digit verification code to ${PhoneVerificationService.maskPhoneNumber(identifier)} via SMS.'
+              : 'We sent a verification code to $identifier.',
           style: const TextStyle(
             fontSize: 13,
             color: Color(0xFF64748B),
@@ -1472,53 +1469,28 @@ class _LoginScreenState extends State<LoginScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFFEF3C7),
+              color: const Color(0xFFEEF2FF),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFFCD34D)),
+              border: Border.all(color: const Color(0xFFC7D2FE)),
             ),
-            child: Row(
+            child: const Row(
               children: [
-                const Icon(Icons.verified_rounded, color: Color(0xFFD97706), size: 18),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Verification Code: 1234',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF92400E),
-                        ),
-                      ),
-                      Text(
-                        'SMS credits exhausted. Use 1234 to verify instantly.',
-                        style: TextStyle(fontSize: 10, color: Color(0xFFB45309)),
-                      ),
-                    ],
+                Icon(Icons.sms_outlined, color: Color(0xFF4F46E5), size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Please check your SMS messages and enter the code below.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF3730A3),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _otpController.text = '1234';
-                    });
-                  },
-                  style: TextButton.styleFrom(
-                    backgroundColor: const Color(0xFFD97706),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                  ),
-                  child: const Text('Auto-fill', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 11)),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
         ] else ...[
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1544,7 +1516,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
         ],
 
         // OTP Input Field

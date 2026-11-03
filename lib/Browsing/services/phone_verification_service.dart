@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../core/api_client.dart';
 
@@ -345,16 +347,23 @@ class PhoneVerificationService {
     return null;
   }
 
+  static const String _cpaasBaseUrl = 'https://cpaas.messagecentral.com';
+  static const String _cpaasCustomerId = 'C-836DB70B5587493';
+  static const String _cpaasAuthToken =
+      'eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJDLTgzNkRCNzBCNTU4NzQ5MyIsImlhdCI6MTc3MzA0NzU5OSwiZXhwIjoxOTMwNzI3NTk5fQ.pgnC_7IQgwfh3QGRuu4APflRX9VCpt_RQNR-QX1SP425KXn4PUmAohdQTWtEWhDx7Z9lOVfAevCVHCed4uemew';
+
+  static final Map<String, String> _verificationStore = {};
+
   static Future<OtpSendResult> sendSmsOtp({
     required String phone,
     Map<String, dynamic>? verifiedUser,
   }) async {
     final norm = normalizePhoneNumber(phone);
 
-    if (norm.isEmpty) {
+    if (norm.isEmpty || norm.length != 10) {
       return const OtpSendResult(
         success: false,
-        errorMessage: 'Invalid phone number.',
+        errorMessage: 'Please enter a valid 10-digit mobile number.',
       );
     }
 
@@ -367,18 +376,103 @@ class PhoneVerificationService {
       );
     }
 
-    final now = DateTime.now();
-    _phoneLastSent[norm] = now;
-    _phoneAttemptHistory.putIfAbsent(norm, () => []).add(now);
+    try {
+      debugPrint('📱 [SMS Gateway] Calling MessageCentral send API for: $norm');
+      final url = Uri.parse(
+        '$_cpaasBaseUrl/verification/v3/send?countryCode=91&customerId=$_cpaasCustomerId&flowType=SMS&mobileNumber=$norm',
+      );
 
-    final verificationId = 'OTP_VERIFY_${now.millisecondsSinceEpoch}';
+      final response = await http.post(
+        url,
+        headers: {
+          'authToken': _cpaasAuthToken,
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 12));
 
-    return OtpSendResult(
-      success: true,
-      verificationId: verificationId,
-      message: 'OTP sent to ${maskPhoneNumber(phone)}! (Enter 1234 or any 4 digits to verify)',
-      cooldownSeconds: defaultCooldownSeconds,
-    );
+      debugPrint('📱 [SMS Gateway] Response HTTP ${response.statusCode}: ${response.body}');
+      final dynamic decoded = jsonDecode(response.body);
+
+      if (decoded is Map && decoded['responseCode'] == 200) {
+        final verificationId = decoded['data']?['verificationId']?.toString() ?? '';
+        final timeout = (decoded['data']?['timeout'] as int?) ?? defaultCooldownSeconds;
+        _verificationStore[norm] = verificationId;
+
+        final now = DateTime.now();
+        _phoneLastSent[norm] = now;
+        _phoneAttemptHistory.putIfAbsent(norm, () => []).add(now);
+
+        return OtpSendResult(
+          success: true,
+          verificationId: verificationId,
+          message: 'OTP sent successfully to ${maskPhoneNumber(phone)}',
+          cooldownSeconds: timeout,
+        );
+      } else if (decoded is Map &&
+          (decoded['message'] == 'REQUEST_ALREADY_EXISTS' || decoded['responseCode'] == 409)) {
+        // Retry OTP if request already exists
+        final existingId = _verificationStore[norm];
+        if (existingId != null && existingId.isNotEmpty) {
+          return await _retrySmsOtp(norm, existingId);
+        }
+        return OtpSendResult(
+          success: true,
+          verificationId: existingId,
+          message: 'OTP was already sent to ${maskPhoneNumber(phone)}. Please check SMS.',
+          cooldownSeconds: 60,
+        );
+      } else {
+        final errMsg = (decoded is Map)
+            ? (decoded['data']?['errorMessage'] ??
+                decoded['message'] ??
+                'Failed to send OTP (${decoded['responseCode'] ?? response.statusCode})')
+            : 'SMS API returned HTTP ${response.statusCode}';
+        return OtpSendResult(
+          success: false,
+          errorMessage: errMsg.toString(),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ [SMS Gateway] Error calling send API: $e');
+      return OtpSendResult(
+        success: false,
+        errorMessage: 'Network error calling SMS gateway: $e',
+      );
+    }
+  }
+
+  /// Internal helper to retry SMS OTP via MessageCentral API
+  static Future<OtpSendResult> _retrySmsOtp(String normPhone, String verificationId) async {
+    try {
+      final url = Uri.parse(
+        '$_cpaasBaseUrl/verification/v3/retry?countryCode=91&mobileNumber=$normPhone&verificationId=$verificationId&customerId=$_cpaasCustomerId',
+      );
+
+      final response = await http.post(
+        url,
+        headers: {
+          'authToken': _cpaasAuthToken,
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 12));
+
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['responseCode'] == 200) {
+        final newVerId = decoded['data']?['verificationId']?.toString() ?? verificationId;
+        _verificationStore[normPhone] = newVerId;
+        return OtpSendResult(
+          success: true,
+          verificationId: newVerId,
+          message: 'OTP resent successfully to +91 $normPhone',
+          cooldownSeconds: (decoded['data']?['timeout'] as int?) ?? 60,
+        );
+      } else {
+        final msg = (decoded is Map) ? (decoded['message'] ?? 'Failed to resend OTP') : 'Error';
+        return OtpSendResult(success: false, errorMessage: msg.toString());
+      }
+    } catch (e) {
+      return OtpSendResult(success: false, errorMessage: 'Retry error: $e');
+    }
   }
 
   static Future<OtpValidationResult> validateOtp({
@@ -386,23 +480,58 @@ class PhoneVerificationService {
     required String code,
     required String phone,
   }) async {
+    final norm = normalizePhoneNumber(phone);
     final cleanCode = code.trim();
 
     if (cleanCode.isEmpty) {
       return const OtpValidationResult(
         isValid: false,
-        errorMessage: 'Please enter the 4-digit OTP.',
+        errorMessage: 'Please enter the OTP received via SMS.',
       );
     }
 
-    if (RegExp(r'^\d{4,6}$').hasMatch(cleanCode)) {
-      return const OtpValidationResult(isValid: true);
-    }
+    final effectiveVerId = verificationId.isNotEmpty
+        ? verificationId
+        : (_verificationStore[norm] ?? '');
 
-    return const OtpValidationResult(
-      isValid: false,
-      errorMessage: 'Please enter a valid 4-digit OTP number.',
-    );
+    try {
+      debugPrint('📱 [SMS Gateway] Validating OTP code: $cleanCode for $norm (verId: $effectiveVerId)');
+      final url = Uri.parse(
+        '$_cpaasBaseUrl/verification/v3/validateOtp?countryCode=91&mobileNumber=$norm&verificationId=$effectiveVerId&customerId=$_cpaasCustomerId&code=$cleanCode',
+      );
+
+      final response = await http.get(
+        url,
+        headers: {
+          'authToken': _cpaasAuthToken,
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 12));
+
+      debugPrint('📱 [SMS Gateway] Validation Response HTTP ${response.statusCode}: ${response.body}');
+      final dynamic decoded = jsonDecode(response.body);
+
+      if (decoded is Map && decoded['responseCode'] == 200) {
+        _verificationStore.remove(norm);
+        return const OtpValidationResult(isValid: true);
+      } else {
+        final msg = (decoded is Map)
+            ? (decoded['data']?['errorMessage'] ??
+                decoded['message'] ??
+                'Invalid OTP code. Please check and try again.')
+            : 'Verification failed (${response.statusCode})';
+        return OtpValidationResult(
+          isValid: false,
+          errorMessage: msg.toString(),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ [SMS Gateway] Error validating OTP: $e');
+      return OtpValidationResult(
+        isValid: false,
+        errorMessage: 'Network error validating OTP: $e',
+      );
+    }
   }
 
   /// Verify credentials (password check against database record)
