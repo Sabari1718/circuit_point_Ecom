@@ -6,7 +6,6 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_typography.dart';
 import '../../../core/constants/asset_constants.dart';
 import '../../../core/widgets/cart_badge.dart';
-import '../../../core/widgets/category_card.dart';
 import '../../../core/widgets/product_card.dart';
 import '../../../core/widgets/promo_banner_carousel.dart';
 import '../../../core/widgets/search_bar_widget.dart';
@@ -20,7 +19,6 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bannersAsync = ref.watch(bannersProvider);
-    final categoriesAsync = ref.watch(categoriesProvider);
     final hotDealsAsync = ref.watch(hotDealsProvider);
     final featuredAsync = ref.watch(featuredProductsProvider);
     final bestSellersAsync = ref.watch(bestSellersProvider);
@@ -126,44 +124,6 @@ class HomeScreen extends ConsumerWidget {
                 error: (err, stack) => const SizedBox.shrink(),
               ),
               const SizedBox(height: 16),
-
-              // Shop by Categories Header
-              SectionHeader(
-                title: 'Shop by Category',
-                subtitle: 'Explore top electronics & components',
-                actionLabel: 'View All',
-                onAction: () {
-                  context.pushNamed(RouteNames.categories);
-                },
-              ),
-
-              // Categories Horizontal List (from website screenshot)
-              categoriesAsync.when(
-                data: (categories) => SizedBox(
-                  height: 86,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: categories.length,
-                    itemBuilder: (context, index) {
-                      final category = categories[index];
-                      return CategoryCard(
-                        category: category,
-                        isHorizontal: true,
-                        onTap: () {
-                          // Navigate to Products filtered by this category
-                          ref.read(productFilterProvider.notifier).clearFilters();
-                          ref.read(productFilterProvider.notifier).setCategory(category.id);
-                          context.pushNamed(RouteNames.products);
-                        },
-                      );
-                    },
-                  ),
-                ),
-                loading: () => const SizedBox(height: 86),
-                error: (err, stack) => const SizedBox.shrink(),
-              ),
-              const SizedBox(height: 12),
 
               // Hot Deals Section
               SectionHeader(

@@ -1,0 +1,477 @@
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../config/app_config.dart';
+import '../services/app_validation_service.dart';
+import '../services/auth_service.dart';
+import '../services/security_service.dart';
+import '../navigation/dashboard_router.dart';
+import 'login_screen.dart';
+import 'security_unlock_screen.dart';
+
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  late Animation<double> _scaleAnimation;
+
+  String _statusMessage = 'Initializing Browsing Core...';
+  bool _isChecking = true;
+  bool _isUpdateRequired = false;
+  String _updateMessage = '';
+  String _currentVersion = '';
+  String _latestVersion = '';
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _scaleAnimation = Tween<double>(begin: 0.85, end: 1.0).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
+    );
+    _animController.forward();
+    _validateAndInitApp();
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _validateAndInitApp() async {
+    setState(() {
+      _isChecking = true;
+      _isUpdateRequired = false;
+      _errorMessage = null;
+      _statusMessage = 'Verifying Application Identity...';
+    });
+
+    try {
+      final appId = await AppValidationService.getOrRegisterAppId();
+      debugPrint('BrowsingApp Initialized — App ID: $appId');
+
+      await Future.delayed(const Duration(milliseconds: 400));
+      setState(() => _statusMessage = 'Validating App & Software Version...');
+
+      final valResult = await AppValidationService.validateApp();
+      final status = valResult['status'];
+      final message = valResult['message'] ?? '';
+
+      debugPrint('Validation -> Status: $status | Message: $message');
+
+      if (!mounted) return;
+
+      // Status 2 → Update required, block entry
+      if (status == 2) {
+        setState(() {
+          _isChecking = false;
+          _isUpdateRequired = true;
+          _updateMessage = message.isNotEmpty
+              ? message
+              : 'Update required. Please update your app version.';
+          _currentVersion =
+              valResult['currentSoftwareVersion']?.toString() ??
+                  valResult['currentAppVersion']?.toString() ??
+                  '1.0.0';
+          _latestVersion =
+              valResult['latestSoftwareVersion']?.toString() ??
+                  valResult['latestAppVersion']?.toString() ??
+                  'Latest';
+        });
+        return;
+      }
+
+      // Status 1 → OK, proceed according to login session & security locks
+      if (status == 1) {
+        setState(
+            () => _statusMessage = 'Validation Successful. Initializing Session...');
+        await Future.delayed(const Duration(milliseconds: 400));
+        await _proceedNext(appId);
+        return;
+      } else {
+        setState(() {
+          _isChecking = false;
+          _errorMessage = message.isNotEmpty
+              ? message
+              : 'Unexpected response status: $status';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final rawError = e.toString();
+      final cleanMsg = rawError.contains('Failed to fetch')
+          ? 'Network / CORS Error: Unable to fetch gateway on Web browser.'
+          : 'Validation Error: ${rawError.replaceAll("Exception: ", "")}';
+
+      setState(() {
+        _isChecking = false;
+        _errorMessage = cleanMsg;
+      });
+    }
+  }
+
+  Future<void> _proceedNext([String? customAppId]) async {
+    if (!mounted) return;
+
+    // 1. Check if user has an active login session within 24 hours (1 day)
+    final isSessionValid = await AuthService.isSessionValidWithinOneDay();
+
+    if (isSessionValid) {
+      bool isLockEnabled = false;
+      try {
+        final secStatus = await SecurityService.getSecurityStatus();
+        isLockEnabled = secStatus.isFingerprintEnabled || secStatus.isPinEnabled;
+      } catch (_) {
+        final prefs = await SharedPreferences.getInstance();
+        final isFingerprint = prefs.getBool(SecurityService.keyPrefFingerprint) ?? false;
+        final isPin = prefs.getBool(SecurityService.keyPrefPin) ?? false;
+        isLockEnabled = isFingerprint || isPin;
+      }
+
+      if (!mounted) return;
+
+      if (isLockEnabled) {
+        // Active 1-day session & locks enabled -> Require unlock with PIN or Biometrics
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const SecurityUnlockScreen(),
+          ),
+        );
+        return;
+      } else {
+        // Active session but user has NOT enabled locks -> Ask for login credentials as requested
+        await AuthService.logout();
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => LoginScreen(appId: customAppId ?? AppConfig.appId),
+          ),
+        );
+        return;
+      }
+    }
+
+    // No active session or 24-hour window expired -> Prompt LoginScreen
+    await AuthService.logout();
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => LoginScreen(appId: customAppId ?? AppConfig.appId),
+      ),
+    );
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF090D16),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // Logo
+                  ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: Container(
+                      width: 90,
+                      height: 90,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: _isUpdateRequired
+                              ? [
+                                  const Color(0xFFF59E0B),
+                                  const Color(0xFFEF4444)
+                                ]
+                              : [
+                                  const Color(0xFF38BDF8),
+                                  const Color(0xFF6366F1)
+                                ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(26),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (_isUpdateRequired
+                                    ? const Color(0xFFF59E0B)
+                                    : const Color(0xFF38BDF8))
+                                .withValues(alpha: 0.35),
+                            blurRadius: 28,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        _isUpdateRequired
+                            ? Icons.system_update_rounded
+                            : Icons.public_rounded,
+                        size: 48,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 28),
+                  const Text(
+                    'BROWSING APP',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 4,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Secure Gateway Powered Browser',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF94A3B8),
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 36),
+
+                  // Case 1: Checking in progress
+                  if (_isChecking) ...[
+                    const SizedBox(
+                      width: 34,
+                      height: 34,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Color(0xFF38BDF8),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      _statusMessage,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF64748B),
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+
+                  // Case 2: Update required
+                  if (_isUpdateRequired) ...[
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                            color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.3),
+                            blurRadius: 15,
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.warning_amber_rounded,
+                                  color: Color(0xFFF59E0B), size: 24),
+                              SizedBox(width: 8),
+                              Text(
+                                'App Update Required!',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _updateMessage,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFFCBD5E1),
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0F172A),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceAround,
+                              children: [
+                                Column(
+                                  children: [
+                                    const Text('Your Version',
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: Color(0xFF94A3B8))),
+                                    const SizedBox(height: 2),
+                                    Text(_currentVersion,
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                            color: Color(0xFFEF4444),
+                                            fontFamily: 'monospace')),
+                                  ],
+                                ),
+                                const Text('➔',
+                                    style: TextStyle(color: Color(0xFF64748B))),
+                                Column(
+                                  children: [
+                                    const Text('Latest Version',
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: Color(0xFF94A3B8))),
+                                    const SizedBox(height: 2),
+                                    Text(_latestVersion,
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                            color: Color(0xFF10B981),
+                                            fontFamily: 'monospace')),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 44,
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text('Check Again / Retry',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.w700)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFF59E0B),
+                                foregroundColor: const Color(0xFF090D16),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: _validateAndInitApp,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  // Case 3: Error fallback
+                  if (_errorMessage != null &&
+                      !_isChecking &&
+                      !_isUpdateRequired) ...[
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                            color:
+                                const Color(0xFFEF4444).withValues(alpha: 0.4)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 12,
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          const Icon(Icons.error_outline_rounded,
+                              color: Color(0xFFEF4444), size: 36),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Validation Failed',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _errorMessage!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFFCBD5E1),
+                                height: 1.4),
+                          ),
+                          const SizedBox(height: 20),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 46,
+                            child: ElevatedButton.icon(
+                              onPressed: _validateAndInitApp,
+                              icon: const Icon(Icons.refresh_rounded, size: 20),
+                              label: const Text('Retry Connection',
+                                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF38BDF8),
+                                foregroundColor: const Color(0xFF090D16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextButton(
+                            onPressed: () {
+                              DashboardRouter.navigateToDashboard(context, clearStack: true);
+                            },
+                            child: const Text(
+                              'Skip & Continue to Store (Demo Mode)',
+                              style: TextStyle(
+                                color: Color(0xFF94A3B8),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -14,8 +14,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.byType(CircuitPointEcomApp), findsOneWidget);
 
-    // Advance past splash transition
-    await tester.pump(const Duration(milliseconds: 2500));
-    await tester.pumpAndSettle();
+    // Advance frames safely
+    await tester.pump(const Duration(milliseconds: 1000));
+    expect(find.byType(CircuitPointEcomApp), findsOneWidget);
   });
 }

@@ -48,8 +48,3 @@ flutter {
     source = "../.."
 }
 
-tasks.configureEach {
-    if (name.contains("NativeLibs", ignoreCase = true) || name.contains("CompressAssets", ignoreCase = true)) {
-        doNotTrackState("Workaround for Gradle 9 incremental tracking")
-    }
-}

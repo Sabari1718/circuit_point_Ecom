@@ -15,8 +15,10 @@ import '../../features/profile/presentation/help_support_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
 import '../../features/profile/presentation/saved_addresses_screen.dart';
 import '../../features/search/presentation/search_screen.dart';
-import '../../features/splash/presentation/splash_screen.dart';
+import '../../features/splash/presentation/splash_screen.dart' as circuit_splash;
 import '../../features/wishlist/presentation/wishlist_screen.dart';
+import '../../Browsing/screens/splash_screen.dart' as browsing;
+import '../../Browsing/screens/app_settings_screen.dart';
 import 'route_names.dart';
 
 final GlobalKey<NavigatorState> _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -25,11 +27,26 @@ final GoRouter appRouter = GoRouter(
   navigatorKey: _rootNavigatorKey,
   initialLocation: '/splash',
   routes: [
-    // Splash Route
+    // Browsing Auth Gateway Splash Route (App Entry Point)
     GoRoute(
       path: '/splash',
       name: RouteNames.splash,
-      builder: (context, state) => const SplashScreen(),
+      builder: (context, state) => const browsing.SplashScreen(),
+    ),
+
+    // Circuit Point Store Intro Splash (Alternative)
+    GoRoute(
+      path: '/circuit-splash',
+      name: 'circuit_splash',
+      builder: (context, state) => const circuit_splash.SplashScreen(),
+    ),
+
+    // App & Security Settings (Biometric / PIN lock / Business Profile)
+    GoRoute(
+      parentNavigatorKey: _rootNavigatorKey,
+      path: '/app-settings',
+      name: RouteNames.appSettings,
+      builder: (context, state) => const AppSettingsScreen(),
     ),
 
     // Stateful Nested Bottom Navigation Shell

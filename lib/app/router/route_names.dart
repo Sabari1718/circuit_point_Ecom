@@ -2,6 +2,7 @@ class RouteNames {
   RouteNames._();
 
   static const String splash = 'splash';
+  static const String appSettings = 'app-settings';
   static const String home = 'home';
   static const String categories = 'categories';
   static const String products = 'products';

@@ -13,6 +13,7 @@ import '../../../shared/providers/cart_provider.dart';
 import '../../../shared/providers/order_provider.dart';
 import '../../../shared/providers/user_provider.dart';
 import '../../../shared/providers/wishlist_provider.dart';
+import '../../../Browsing/services/auth_service.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -165,6 +166,13 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                   const Divider(height: 1, indent: 56),
                   _buildMenuItem(
+                    icon: Icons.shield_outlined,
+                    title: 'Security & App Settings',
+                    subtitle: 'Biometrics, PIN lock & Business profiles',
+                    onTap: () => context.pushNamed(RouteNames.appSettings),
+                  ),
+                  const Divider(height: 1, indent: 56),
+                  _buildMenuItem(
                     icon: Icons.info_outline_rounded,
                     title: 'About Circuit Point',
                     subtitle: 'Learn about our brand & catalog',
@@ -262,19 +270,23 @@ class ProfileScreen extends ConsumerWidget {
   void _showLogoutDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Log Out'),
         content: const Text('Are you sure you want to log out of Circuit Point Ecom?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogCtx),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
-            onPressed: () {
-              Navigator.pop(context);
-              SnackBarUtils.showInfo(context, 'Logged out successfully (Frontend Session)');
+            onPressed: () async {
+              Navigator.pop(dialogCtx);
+              await AuthService.logout();
+              if (context.mounted) {
+                SnackBarUtils.showInfo(context, 'Logged out successfully');
+                context.goNamed(RouteNames.splash);
+              }
             },
             child: const Text('Log Out', style: TextStyle(color: Colors.white)),
           ),
