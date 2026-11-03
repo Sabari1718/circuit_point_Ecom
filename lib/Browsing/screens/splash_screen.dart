@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/constants/asset_constants.dart';
 import '../config/app_config.dart';
 import '../services/app_validation_service.dart';
 import '../services/auth_service.dart';
-import '../services/security_service.dart';
 import '../navigation/dashboard_router.dart';
 import 'login_screen.dart';
 import 'security_unlock_screen.dart';
@@ -22,7 +21,7 @@ class _SplashScreenState extends State<SplashScreen>
   late AnimationController _animController;
   late Animation<double> _scaleAnimation;
 
-  String _statusMessage = 'Initializing Browsing Core...';
+  String _statusMessage = 'Initializing Circuit Point Store...';
   bool _isChecking = true;
   bool _isUpdateRequired = false;
   String _updateMessage = '';
@@ -125,46 +124,22 @@ class _SplashScreenState extends State<SplashScreen>
   Future<void> _proceedNext([String? customAppId]) async {
     if (!mounted) return;
 
-    // 1. Check if user has an active login session within 24 hours (1 day)
-    final isSessionValid = await AuthService.isSessionValidWithinOneDay();
+    // Check if user has an active login session saved
+    final hasSession = await AuthService.hasActiveSession();
 
-    if (isSessionValid) {
-      bool isLockEnabled = false;
-      try {
-        final secStatus = await SecurityService.getSecurityStatus();
-        isLockEnabled = secStatus.isFingerprintEnabled || secStatus.isPinEnabled;
-      } catch (_) {
-        final prefs = await SharedPreferences.getInstance();
-        final isFingerprint = prefs.getBool(SecurityService.keyPrefFingerprint) ?? false;
-        final isPin = prefs.getBool(SecurityService.keyPrefPin) ?? false;
-        isLockEnabled = isFingerprint || isPin;
-      }
-
+    if (hasSession) {
+      // User has logged in before!
+      // Require device lock / biometric unlock (Fingerprint or Phone PIN/Pattern)
       if (!mounted) return;
-
-      if (isLockEnabled) {
-        // Active 1-day session & locks enabled -> Require unlock with PIN or Biometrics
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => const SecurityUnlockScreen(),
-          ),
-        );
-        return;
-      } else {
-        // Active session but user has NOT enabled locks -> Ask for login credentials as requested
-        await AuthService.logout();
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => LoginScreen(appId: customAppId ?? AppConfig.appId),
-          ),
-        );
-        return;
-      }
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => const SecurityUnlockScreen(),
+        ),
+      );
+      return;
     }
 
-    // No active session or 24-hour window expired -> Prompt LoginScreen
-    await AuthService.logout();
+    // No active session -> Prompt LoginScreen
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -177,7 +152,7 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF090D16),
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -187,65 +162,69 @@ class _SplashScreenState extends State<SplashScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo
+                  // Circuit Point Logo
                   ScaleTransition(
                     scale: _scaleAnimation,
                     child: Container(
-                      width: 90,
-                      height: 90,
+                      width: 100,
+                      height: 100,
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: _isUpdateRequired
-                              ? [
-                                  const Color(0xFFF59E0B),
-                                  const Color(0xFFEF4444)
-                                ]
-                              : [
-                                  const Color(0xFF38BDF8),
-                                  const Color(0xFF6366F1)
-                                ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(26),
+                        color: Colors.white,
+                        shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: (_isUpdateRequired
-                                    ? const Color(0xFFF59E0B)
-                                    : const Color(0xFF38BDF8))
-                                .withValues(alpha: 0.35),
-                            blurRadius: 28,
+                            color: const Color(0xFFE94560).withValues(alpha: 0.25),
+                            blurRadius: 24,
                             spreadRadius: 2,
+                            offset: const Offset(0, 6),
                           ),
                         ],
                       ),
-                      child: Icon(
-                        _isUpdateRequired
-                            ? Icons.system_update_rounded
-                            : Icons.public_rounded,
-                        size: 48,
-                        color: Colors.white,
+                      padding: const EdgeInsets.all(12),
+                      child: Image.asset(
+                        AssetConstants.logo,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) => const Icon(
+                          Icons.memory_rounded,
+                          size: 52,
+                          color: Color(0xFFE94560),
+                        ),
                       ),
                     ),
                   ),
 
                   const SizedBox(height: 28),
-                  const Text(
-                    'BROWSING APP',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 4,
-                      color: Colors.white,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      Text(
+                        'CIRCUIT ',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 3,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      Text(
+                        'POINT',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 3,
+                          color: Color(0xFFE94560),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Secure Gateway Powered Browser',
+                    'Electronics & Components Store',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Color(0xFF94A3B8),
+                      color: Color(0xFF64748B),
                       letterSpacing: 0.5,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                   const SizedBox(height: 36),
@@ -258,7 +237,7 @@ class _SplashScreenState extends State<SplashScreen>
                       child: CircularProgressIndicator(
                         strokeWidth: 2.5,
                         valueColor: AlwaysStoppedAnimation<Color>(
-                          Color(0xFF38BDF8),
+                          Color(0xFFE94560),
                         ),
                       ),
                     ),
@@ -438,8 +417,8 @@ class _SplashScreenState extends State<SplashScreen>
                               label: const Text('Retry Connection',
                                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF38BDF8),
-                                foregroundColor: const Color(0xFF090D16),
+                                backgroundColor: const Color(0xFFE94560),
+                                foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10),
                                 ),

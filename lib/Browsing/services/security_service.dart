@@ -410,4 +410,34 @@ class SecurityService {
       return false;
     }
   }
+
+  /// Prompt native phone unlock: Fingerprint, Face, or device PIN / Pattern / Password
+  static Future<bool> authenticateWithDeviceLock({
+    String reason = 'Scan fingerprint or enter phone PIN to unlock Circuit Point Ecom',
+  }) async {
+    try {
+      final isSupported = await _localAuth.isDeviceSupported();
+      final canCheck = await _localAuth.canCheckBiometrics;
+      if (!isSupported && !canCheck) {
+        print('ℹ️ [SecurityService] No lock hardware detected on device');
+        return true;
+      }
+
+      print('👆 [SecurityService] Prompting phone screen lock / biometric...');
+      final authenticated = await _localAuth.authenticate(
+        localizedReason: reason,
+        biometricOnly: false, // Critical: Allows Fingerprint or Phone PIN/Pattern/Password!
+        persistAcrossBackgrounding: true,
+      );
+
+      print('👆 [SecurityService] Device lock authenticated: $authenticated');
+      return authenticated;
+    } on PlatformException catch (e) {
+      print('⚠️ [SecurityService] Device lock auth platform error: ${e.message} (${e.code})');
+      return false;
+    } catch (e) {
+      print('⚠️ [SecurityService] Device lock auth exception: $e');
+      return false;
+    }
+  }
 }

@@ -185,6 +185,14 @@ class AuthService {
 
   static const String keyLastLoginTimestamp = 'last_login_timestamp';
 
+  /// Check if user has an active login session saved
+  static Future<bool> hasActiveSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(ApiClient.keyUserAppToken);
+    final userId = prefs.getString(ApiClient.keyUserMainId);
+    return token != null && token.isNotEmpty && userId != null && userId.isNotEmpty;
+  }
+
   /// Check if the user has an active login session that occurred within 24 hours (1 day)
   static Future<bool> isSessionValidWithinOneDay() async {
     final prefs = await SharedPreferences.getInstance();
